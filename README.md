@@ -37,11 +37,16 @@ chmod 600 .env
 OPENAI_API_KEY=
 PA_SAVE_RUN_URL=
 PA_WORKFLOW_SECRET=
+CANVAS_API_BASE_URL=https://mugen-ai-chat.jp
+CANVAS_API_KEY=
+CANVAS_COMPANY_ID=
+CANVAS_AGENT_ID=
+CANVAS_EXTERNAL_USER_ID=creative-production-user-001
 FIREFLY_CLIENT_ID=
 FIREFLY_CLIENT_SECRET=
 ```
 
-Power Automate credentials are only needed for SharePoint save/post steps. Firefly credentials are only needed for `$banner-resizer`.
+Canvas credentials are only needed for `$banner-proposal` Phase 3 acceptance evaluation. Power Automate credentials are only needed for SharePoint save/post steps. Firefly credentials are only needed for `$banner-resizer`.
 
 ## Usage
 

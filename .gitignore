@@ -16,6 +16,11 @@ dry_run_plan.json
 manifest.json
 generated_banners.zip
 
+# Local reference copy of the Canvas helper CLI. The skill documents the API
+# contract and calls Canvas directly; this helper folder is not required at
+# runtime.
+creative-production-workflow-integration/
+
 .venv/
 venv/
 node_modules/

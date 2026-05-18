@@ -29,7 +29,7 @@ Ignored by default:
 - OpenAI keys are loaded from environment/config files and are not accepted as CLI arguments.
 - Power Automate URL and workflow secret are loaded from environment/config files.
 - Adobe Firefly credentials are loaded from environment/config files.
-- Canvas API-key CSV values must never be displayed, summarized, or saved.
+- Canvas API key, company ID, and agent ID are loaded from environment/config files. The shared skill does not require or read a credential CSV.
 
 ## Sharing
 

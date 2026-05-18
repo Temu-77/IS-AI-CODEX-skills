@@ -8,6 +8,8 @@ Use when starting the 2-1 banner concept workflow.
 $banner-proposal を使って、2-1. バナー案作成フローを実行してください。
 ```
 
+Canvas acceptance evaluation in Phase 3 uses the Canvas API directly. Configure `CANVAS_API_KEY`, `CANVAS_COMPANY_ID`, and `CANVAS_AGENT_ID` in `.env`; no Canvas credential CSV or local Canvas CLI is required.
+
 ## Banner Design Production
 
 Use after one or more proposal concepts have been selected and feedback exists.

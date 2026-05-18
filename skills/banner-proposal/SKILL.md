@@ -87,12 +87,11 @@ description: バナー案作成フローを3段階ゲートで実行する。ク
 
 1. Canvas受容性評価は、ユーザーが「受容性評価を実行して」など明示した後だけ実行する。
 2. このSkillではCanvasを受容性評価に限定し、上流のターゲット設計やコピー作成にはデフォルトで使わない。
-3. `scripts/run_canvas_acceptance_eval.py` を使い、承認済みまたは評価対象のバナー案をCanvasへ渡す。
-4. Canvas送信プロンプトはデフォルトで `canvas_acceptance_prompt_sanitized.txt` とし、ローカル絶対パス、URL、秘密情報を本文に含めない。Canvas CLIは画像ファイル本体を送れないため、画像は `concept_1` などのasset ID、ファイル名、コンセプト要約で参照する。
+3. `scripts/run_canvas_acceptance_eval.py` を使い、承認済みまたは評価対象のバナー案をCanvas APIへ直接POSTする。ローカルのCanvas CLIや認証CSVは呼ばない。
+4. Canvas送信プロンプトはデフォルトで `canvas_acceptance_prompt_sanitized.txt` とし、ローカル絶対パス、URL、秘密情報を本文に含めない。Canvas APIには画像ファイル本体を添付しないため、画像は `concept_1` などのasset ID、ファイル名、コンセプト要約で参照する。
    - CloudFront/WAFのPOST本文検査を避けるため、Canvas送信プロンプトは標準で6500 bytes以下に抑える。QA抜粋は短くし、必要な場合だけ `--max-qa-chars` を明示して増やす。
 5. `canvas_outputs.json` は `schema_version=canvas_acceptance_eval.v1` のテンプレートに固定する。機械処理用には `delivery_recommendation` を `deliver`、`revise`、`reject` のいずれかで保存し、ユーザー表示用には `delivery_judgement_jp` を `配信可`、`修正後配信可`、`配信不可` のいずれかに正規化する。
 6. Canvas POSTがHTTP 403かつCloudFrontのHTMLを返した場合は、Canvasエージェント処理失敗ではなくCloudFront/WAFでブロックされた通信失敗として扱う。`canvas_outputs.json` には `error_type=cloudfront_403`、`attempts`、`error_summary`、`likely_cause` を保存し、SharePoint payloadにも失敗ログとして残す。
-   - Canvas CLIは標準で `/usr/bin/python3` から実行する。ローカルのPython 3.14では証明書検証差分、またはTLS/HTTP特性によりCloudFront 403が再現したため、`python3` を直接使わない。
 7. ユーザーへ返す受容性評価結果は、`canvas_outputs.json` の `user_summary_markdown` をもとに、以下の日本語項目名で返す。
    - バナー案
    - AIペルソナ評価スコア
@@ -139,7 +138,7 @@ python3 ~/.codex/skills/banner-proposal/scripts/generate_gpt_image2_batch.py \
 python3 ~/.codex/skills/banner-proposal/scripts/check_external_integrations.py
 ```
 
-- Canvasは、CSVとCLIが存在すれば受容性評価プロンプト作成と実行が可能。
+- Canvasは、`CANVAS_API_KEY`、`CANVAS_COMPANY_ID`、`CANVAS_AGENT_ID` が環境変数または `.env` にあれば受容性評価プロンプト作成と実行が可能。
 - SharePointは、Power Automate設定と送信スクリプトがあればpayload作成は可能。実POSTには実行cwdの `.env`、Skill packの `.env`、または `~/.config/acrc-codex-skills/.env` に `PA_SAVE_RUN_URL` と `PA_WORKFLOW_SECRET` が必要。
 - SharePoint POSTは `scripts/send_sharepoint_flow1.py` を使う。このスクリプトは `certifi` のCA bundleを明示してTLS検証するため、ローカルPython 3.14の証明書ストア未設定による初回POST失敗を避ける。
 - 状態確認時も、APIキー、Canvasキー、Power Automate URL/secretは表示しない。
@@ -167,7 +166,7 @@ python3 ~/.codex/skills/banner-proposal/scripts/check_external_integrations.py
 
 ## 秘密情報ルール
 
-- Canvas CSV、Power Automate `.env`、OpenAI認証情報の値を読んで表示、要約、保存しない。
+- Canvas API key、Power Automate `.env`、OpenAI認証情報の値を読んで表示、要約、保存しない。
 - ユーザー向け要約ではURLやsecretを伏せる。
 - OpenAI APIキーをSkillフォルダ、プロジェクト成果物、プロンプト、ログ、SharePoint payload本文へ保存しない。
 - 生成成果物は、ユーザーが明示的に依頼しない限りコミット対象にしない。

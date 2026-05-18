@@ -7,11 +7,12 @@ import argparse
 import json
 import os
 import re
-import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib import error, parse, request
 
 try:
     from phase_timing_utils import record_phase_event, utc_now_iso
@@ -22,11 +23,9 @@ except ImportError:  # pragma: no cover - fallback for direct copies of this scr
         return datetime.now(timezone.utc).isoformat()
 
 
-DEFAULT_CANVAS_CLI = Path(
-    "/Users/powerly/Desktop/IoC/CANVAS/creative-production-workflow-integration/creative_production_chat.py"
-)
-DEFAULT_CANVAS_CSV = Path("/Users/powerly/Desktop/IoC/CANVAS/Canvas-APIKEY_for-CreativeProductionWorkflow.csv")
-DEFAULT_CANVAS_PYTHON = Path("/usr/bin/python3")
+DEFAULT_CANVAS_API_BASE_URL = "https://mugen-ai-chat.jp"
+DEFAULT_CANVAS_EXTERNAL_USER_ID = "creative-production-user-001"
+CONFIG_ENV_FILE = Path.home() / ".config/acrc-codex-skills/.env"
 
 CANVAS_OUTPUT_SCHEMA_VERSION = "canvas_acceptance_eval.v1"
 PROMPT_MODE = "sanitized_json_v1_no_paths_or_urls"
@@ -41,6 +40,7 @@ SECRET_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9_-]{16,}"),
     re.compile(r"sk-proj-[A-Za-z0-9_-]{16,}"),
     re.compile(r"(OPENAI_API_KEY\s*[:=]\s*)[^\s\"']+", re.IGNORECASE),
+    re.compile(r"(CANVAS_API_KEY\s*[:=]\s*)[^\s\"']+", re.IGNORECASE),
     re.compile(r"(PA_WORKFLOW_SECRET\s*[:=]\s*)[^\s\"']+", re.IGNORECASE),
     re.compile(r"(FIREFLY_CLIENT_SECRET\s*[:=]\s*)[^\s\"']+", re.IGNORECASE),
     re.compile(r"(api[_-]?key\s*[:=]\s*)[^\s\"']+", re.IGNORECASE),
@@ -60,15 +60,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-dir", required=True, help="banner_concepts.jsonとQA出力を含むrunフォルダ。")
     parser.add_argument("--agent-name", default="AIグルイン v1.0", help="使用するCanvasエージェント名。")
     parser.add_argument("--campaign-goal", help="キャンペーン目的の上書き。")
-    parser.add_argument("--canvas-cli", default=str(DEFAULT_CANVAS_CLI), help="Canvas CLIパス。")
-    parser.add_argument(
-        "--python-bin",
-        default=str(DEFAULT_CANVAS_PYTHON),
-        help="Canvas CLI実行に使うPython。標準はmacOS system Pythonの/usr/bin/python3。",
-    )
-    parser.add_argument("--csv", default=str(DEFAULT_CANVAS_CSV), help="Canvas認証CSVパス。")
+    parser.add_argument("--base-url", default=None, help="Canvas API base URL。未指定時はCANVAS_API_BASE_URL、なければ本番URL。")
+    parser.add_argument("--company-id", default=os.environ.get("CANVAS_COMPANY_ID"), help="Canvas company_id。未指定時はCANVAS_COMPANY_ID。")
+    parser.add_argument("--agent-id", default=os.environ.get("CANVAS_AGENT_ID"), help="Canvas agent_id。未指定時はCANVAS_AGENT_ID。")
+    parser.add_argument("--external-user-id", default=None, help="Canvas external_user_id。未指定時はCANVAS_EXTERNAL_USER_ID、なければ既定値。")
+    parser.add_argument("--conversation-id", default=os.environ.get("CANVAS_CONVERSATION_ID"), help="Canvas conversation_id。継続会話時のみ指定。")
     parser.add_argument("--output", help="Canvas出力JSONパス。未指定時は<run-dir>/canvas_outputs.json。")
-    parser.add_argument("--execute", action="store_true", help="Canvas CLIを実行する。未指定時はプロンプト作成のみ。")
+    parser.add_argument("--execute", action="store_true", help="Canvas APIを実行する。未指定時はプロンプト作成のみ。")
     parser.add_argument(
         "--approved-concepts",
         help="評価対象concept ID。カンマ区切りで指定。例: concept_1,concept_2",
@@ -85,8 +83,8 @@ def parse_args() -> argparse.Namespace:
         default=6500,
         help="CloudFront/WAFブロック回避のためのCanvas送信プロンプト最大byte数。",
     )
-    parser.add_argument("--max-attempts", type=int, default=2, help="Canvas CLI実行の最大試行回数。")
-    parser.add_argument("--timeout", type=int, default=240, help="Canvas CLI実行タイムアウト秒数。")
+    parser.add_argument("--max-attempts", type=int, default=2, help="Canvas API実行の最大試行回数。")
+    parser.add_argument("--timeout", type=int, default=240, help="Canvas API実行タイムアウト秒数。")
     return parser.parse_args()
 
 
@@ -100,11 +98,51 @@ def redact(text: str) -> str:
     return redacted
 
 
+def unquote_env_value(value: str) -> str:
+    value = value.strip()
+    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+        return value[1:-1]
+    return value
+
+
+def load_env_file(path: Path) -> bool:
+    if not path.exists():
+        return False
+    mode = path.stat().st_mode & 0o777
+    if mode & 0o077:
+        print(f"Warning: {path} should be readable only by the current user. Run: chmod 600 {path}", file=sys.stderr)
+    for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), unquote_env_value(value))
+    return True
+
+
+def load_env_candidates() -> list[str]:
+    loaded: list[str] = []
+    candidates = [Path.cwd() / ".env", CONFIG_ENV_FILE]
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.expanduser().resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if load_env_file(resolved):
+            loaded.append(str(resolved))
+    return loaded
+
+
 def sanitize_canvas_prompt(text: str) -> tuple[str, int]:
     """Remove local paths and URLs from the prompt before it is sent to Canvas.
 
     CloudFront/WAF can block POST bodies that contain filesystem paths or URLs.
-    Canvas CLI cannot upload local images, so absolute paths add risk without
+    Canvas API cannot upload local images in this workflow, so absolute paths add risk without
     adding evaluable image data.
     """
     return LOCAL_PATH_OR_URL_RE.subn("[LOCAL_PATH_OR_URL_REMOVED]", text)
@@ -115,7 +153,7 @@ def has_local_path_or_url(text: str) -> bool:
 
 
 def clean_canvas_output(text: str) -> str:
-    """Remove transport/status lines emitted by the existing Canvas CLI."""
+    """Remove transport/status lines and keep only evaluable response text."""
     cleaned_lines: list[str] = []
     for line in text.splitlines():
         stripped = line.strip()
@@ -654,26 +692,17 @@ def build_user_summary_markdown(standardized: dict[str, Any], empty_note: str | 
     return "\n".join(lines) + "\n"
 
 
-def detect_canvas_error(stdout: str, stderr: str, returncode: int) -> dict[str, Any]:
-    if returncode == 0:
-        return {
-            "error_type": "",
-            "error_summary": "",
-            "likely_cause": "",
-            "retryable": False,
-        }
-    combined = f"{stdout}\n{stderr}"
-    if "CloudFront" in combined or "HTTP 403" in combined or "403 ERROR" in combined:
+def canvas_error_info(error_text: str, status_code: int | None = None) -> dict[str, Any]:
+    combined = error_text
+    if status_code is None and not combined:
+        return {"error_type": "", "error_summary": "", "likely_cause": "", "retryable": False}
+    if status_code == 403 or "CloudFront" in combined or "HTTP 403" in combined or "403 ERROR" in combined:
         return {
             "error_type": "cloudfront_403",
             "error_summary": "Canvas API POSTがCloudFrontでブロックされました。",
             "likely_cause": (
                 "Canvasアプリ到達前にCloudFront/WAFで拒否されています。"
-                "過去の失敗ではCanvas送信プロンプトにローカル絶対パスが含まれていたことに加え、"
-                "8KB前後の長いPOST本文、ローカルPython 3.14実行系でのCanvas CLI呼び出しでもCloudFront 403が再現しました。"
-                "Skillはデフォルトでパス/URLを送らないサニタイズ済みプロンプトを使い、"
-                "QA抜粋を短くして送信本文を6500 bytes以下に抑え、"
-                "Canvas CLIはmacOS system Pythonの/usr/bin/python3で実行する設定に変更しています。"
+                "Skillはデフォルトでパス/URLを送らないサニタイズ済みプロンプトを使い、QA抜粋を短くして送信本文を6500 bytes以下に抑えています。"
                 "それでも継続する場合はCanvas側のCloudFront/WAF許可設定またはAPI提供元への確認が必要です。"
             ),
             "retryable": True,
@@ -692,47 +721,208 @@ def detect_canvas_error(stdout: str, stderr: str, returncode: int) -> dict[str, 
             "likely_cause": "Canvas側の処理待ち、ネットワーク遅延、または一時的な混雑の可能性があります。",
             "retryable": True,
         }
+    if status_code in {429, 500, 502, 503, 504}:
+        return {
+            "error_type": f"http_{status_code}",
+            "error_summary": f"Canvas APIがHTTP {status_code}を返しました。",
+            "likely_cause": "Canvas側の一時的な制限、混雑、または上流エラーの可能性があります。",
+            "retryable": True,
+        }
+    if status_code:
+        return {
+            "error_type": f"http_{status_code}",
+            "error_summary": f"Canvas APIがHTTP {status_code}を返しました。",
+            "likely_cause": "Canvas API設定、API key、company_id、agent_id、またはリクエスト内容を確認してください。",
+            "retryable": False,
+        }
     return {
-        "error_type": "canvas_cli_failed",
-        "error_summary": "Canvas CLI実行に失敗しました。",
+        "error_type": "canvas_api_failed",
+        "error_summary": "Canvas API実行に失敗しました。",
         "likely_cause": "canvas_outputs.json の error と attempts を確認してください。",
         "retryable": False,
     }
 
 
-def run_canvas_command(
-    command: list[str],
+def parse_sse_response(response: Any) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    output_parts: list[str] = []
+    metadata: dict[str, Any] = {}
+    buffer: list[str] = []
+
+    def emit(data_text: str) -> str:
+        try:
+            payload = json.loads(data_text)
+        except json.JSONDecodeError:
+            output_parts.append(data_text)
+            events.append({"type": "raw", "text": data_text})
+            return "raw"
+
+        event_type = safe_text(payload.get("type") or "unknown")
+        event = {"type": event_type}
+        if event_type == "start":
+            metadata["conversation_id"] = payload.get("conversation_id")
+            metadata["is_new_conversation"] = payload.get("is_new_conversation")
+        elif event_type == "delta":
+            text = safe_text(payload.get("text"))
+            output_parts.append(text)
+            event["text_chars"] = len(text)
+        elif event_type == "end":
+            metadata.update(
+                {
+                    "rally_id": payload.get("id"),
+                    "input_tokens": payload.get("input_tokens"),
+                    "output_tokens": payload.get("output_tokens"),
+                    "total_tokens": payload.get("total_tokens"),
+                    "points_consumed": payload.get("points_consumed"),
+                    "points_balance": payload.get("points_balance"),
+                }
+            )
+        elif event_type == "error":
+            event["error_code"] = payload.get("error_code")
+            event["message"] = redact(safe_text(payload.get("message")))
+        else:
+            event["payload_keys"] = sorted(payload.keys())
+        events.append(event)
+        return event_type
+
+    for raw_line in response:
+        line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+        if not line:
+            data_lines = [item[5:].lstrip() for item in buffer if item.startswith("data:")]
+            if data_lines:
+                event_type = emit("\n".join(data_lines))
+                if event_type in {"end", "error"}:
+                    buffer.clear()
+                    break
+            buffer.clear()
+            continue
+        if line.startswith(":"):
+            continue
+        buffer.append(line)
+
+    if buffer:
+        data_lines = [item[5:].lstrip() for item in buffer if item.startswith("data:")]
+        if data_lines:
+            emit("\n".join(data_lines))
+
+    return "".join(output_parts), events, metadata
+
+
+def call_canvas_api_once(
     *,
-    env: dict[str, str],
+    prompt: str,
+    base_url: str,
+    company_id: str,
+    agent_id: str,
+    api_key: str,
+    external_user_id: str,
+    conversation_id: str | None,
+    timeout: int,
+) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+    url = base_url.rstrip("/") + f"/api/v1/external/agent/{parse.quote(agent_id, safe='')}/chat"
+    body: dict[str, Any] = {
+        "company_id": company_id,
+        "message": prompt,
+        "external_user_id": external_user_id,
+    }
+    if conversation_id:
+        body["conversation_id"] = conversation_id
+    req = request.Request(
+        url=url,
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+            "X-API-Key": api_key,
+        },
+    )
+    with request.urlopen(req, timeout=timeout) as response:
+        content_type = response.headers.get("Content-Type", "")
+        if not content_type.startswith("text/event-stream"):
+            response_body = response.read(1200).decode("utf-8", errors="replace")
+            raise RuntimeError(f"Unexpected non-SSE response from Canvas API: {content_type}\n{response_body}")
+        return parse_sse_response(response)
+
+
+def run_canvas_api(
+    *,
+    prompt: str,
+    args: argparse.Namespace,
     timeout: int,
     max_attempts: int,
-) -> tuple[subprocess.CompletedProcess[str], list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[str, list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    api_key = os.environ.get("CANVAS_API_KEY", "").strip()
+    company_id = safe_text(args.company_id or os.environ.get("CANVAS_COMPANY_ID"))
+    agent_id = safe_text(args.agent_id or os.environ.get("CANVAS_AGENT_ID"))
+    base_url = safe_text(args.base_url or os.environ.get("CANVAS_API_BASE_URL") or DEFAULT_CANVAS_API_BASE_URL)
+    external_user_id = safe_text(args.external_user_id or os.environ.get("CANVAS_EXTERNAL_USER_ID") or DEFAULT_CANVAS_EXTERNAL_USER_ID)
+    conversation_id = safe_text(args.conversation_id or os.environ.get("CANVAS_CONVERSATION_ID")) or None
+    missing = [
+        name
+        for name, value in {
+            "CANVAS_API_KEY": api_key,
+            "CANVAS_COMPANY_ID": company_id,
+            "CANVAS_AGENT_ID": agent_id,
+            "CANVAS_EXTERNAL_USER_ID": external_user_id,
+        }.items()
+        if not value
+    ]
+    if missing:
+        raise RuntimeError("Missing required Canvas environment values: " + ", ".join(missing))
+
     attempts: list[dict[str, Any]] = []
-    completed: subprocess.CompletedProcess[str] | None = None
-    error_info: dict[str, Any] = {}
+    events: list[dict[str, Any]] = []
+    metadata: dict[str, Any] = {
+        "base_url": base_url,
+        "agent_name": args.agent_name,
+        "external_user_id": external_user_id,
+        "conversation_id": conversation_id or "",
+    }
+    last_error: dict[str, Any] = {}
     attempts_count = max(1, max_attempts)
     for attempt_number in range(1, attempts_count + 1):
-        completed = subprocess.run(command, check=False, text=True, capture_output=True, timeout=timeout, env=env)
-        raw_output = redact(completed.stdout)
-        raw_error = redact(completed.stderr)
-        error_info = detect_canvas_error(raw_output, raw_error, completed.returncode)
-        attempts.append(
-            {
-                "attempt": attempt_number,
-                "returncode": completed.returncode,
-                "error_type": error_info.get("error_type", ""),
-                "error_summary": error_info.get("error_summary", ""),
-                "stderr_preview": raw_error[:1200],
-            }
-        )
-        if completed.returncode == 0:
-            break
-        if not error_info.get("retryable") or attempt_number >= attempts_count:
+        try:
+            output_text, events, response_meta = call_canvas_api_once(
+                prompt=prompt,
+                base_url=base_url,
+                company_id=company_id,
+                agent_id=agent_id,
+                api_key=api_key,
+                external_user_id=external_user_id,
+                conversation_id=conversation_id,
+                timeout=timeout,
+            )
+            metadata.update(response_meta)
+            error_events = [event for event in events if event.get("type") == "error"]
+            if error_events:
+                message = safe_text(error_events[0].get("message"))
+                last_error = canvas_error_info(message)
+                attempts.append({"attempt": attempt_number, "status": "failed", "error_type": last_error.get("error_type"), "error_summary": message[:1200]})
+                if not last_error.get("retryable") or attempt_number >= attempts_count:
+                    return output_text, events, attempts, last_error, metadata
+                time.sleep(min(2 * attempt_number, 5))
+                continue
+            attempts.append({"attempt": attempt_number, "status": "success", "event_count": len(events)})
+            return output_text, events, attempts, {"error_type": "", "error_summary": "", "likely_cause": "", "retryable": False}, metadata
+        except error.HTTPError as exc:
+            body = redact(exc.read().decode("utf-8", errors="replace"))
+            last_error = canvas_error_info(body, exc.code)
+            attempts.append({"attempt": attempt_number, "status": "failed", "http_status": exc.code, "error_type": last_error.get("error_type"), "error_summary": last_error.get("error_summary"), "stderr_preview": body[:1200]})
+        except error.URLError as exc:
+            body = redact(str(exc.reason))
+            last_error = canvas_error_info(body)
+            attempts.append({"attempt": attempt_number, "status": "failed", "error_type": last_error.get("error_type"), "error_summary": last_error.get("error_summary"), "stderr_preview": body[:1200]})
+        except Exception as exc:  # noqa: BLE001 - normalize API/client failures into output JSON.
+            body = redact(str(exc))
+            last_error = canvas_error_info(body)
+            attempts.append({"attempt": attempt_number, "status": "failed", "error_type": last_error.get("error_type"), "error_summary": last_error.get("error_summary"), "stderr_preview": body[:1200]})
+
+        if not last_error.get("retryable") or attempt_number >= attempts_count:
             break
         time.sleep(min(2 * attempt_number, 5))
-    if completed is None:  # pragma: no cover
-        raise RuntimeError("Canvas command was not executed.")
-    return completed, attempts, error_info
+
+    return "", events, attempts, last_error or canvas_error_info("Canvas API failed"), metadata
 
 
 def update_run_summary(run_dir: Path, output_path: Path, result: dict[str, Any], prompt_mode: str) -> None:
@@ -756,6 +946,12 @@ def update_run_summary(run_dir: Path, output_path: Path, result: dict[str, Any],
 
 def main() -> int:
     args = parse_args()
+    load_env_candidates()
+    args.base_url = args.base_url or os.environ.get("CANVAS_API_BASE_URL", DEFAULT_CANVAS_API_BASE_URL)
+    args.company_id = args.company_id or os.environ.get("CANVAS_COMPANY_ID")
+    args.agent_id = args.agent_id or os.environ.get("CANVAS_AGENT_ID")
+    args.external_user_id = args.external_user_id or os.environ.get("CANVAS_EXTERNAL_USER_ID", DEFAULT_CANVAS_EXTERNAL_USER_ID)
+    args.conversation_id = args.conversation_id or os.environ.get("CANVAS_CONVERSATION_ID")
     started_at = utc_now_iso()
     run_dir = Path(args.run_dir).expanduser().resolve()
     output_path = Path(args.output).expanduser().resolve() if args.output else run_dir / "canvas_outputs.json"
@@ -810,7 +1006,14 @@ def main() -> int:
         "status": "prompt_too_large" if args.execute and prompt_too_large_error else "prompt_prepared",
         "executed": False,
         "agent_name": args.agent_name,
-        "canvas_python": args.python_bin,
+        "canvas_api": {
+            "base_url": args.base_url,
+            "company_id_configured": bool(args.company_id),
+            "agent_id_configured": bool(args.agent_id),
+            "api_key_configured": bool(os.environ.get("CANVAS_API_KEY", "").strip()),
+            "external_user_id": args.external_user_id,
+            "conversation_id": args.conversation_id or "",
+        },
         "prompt_file": str(prompt_path),
         "prompt_mode": prompt_mode,
         "prompt_sanitization": prompt_meta,
@@ -840,69 +1043,46 @@ def main() -> int:
     }
 
     if execute_allowed:
-        canvas_cli = Path(args.canvas_cli).expanduser().resolve()
-        csv_path = Path(args.csv).expanduser().resolve()
-        python_bin_arg = Path(args.python_bin).expanduser()
-        python_command = str(python_bin_arg.resolve()) if python_bin_arg.is_absolute() else args.python_bin
-        use_system_python = False
-        if python_bin_arg.is_absolute():
-            if not python_bin_arg.exists():
-                raise FileNotFoundError(python_bin_arg)
-            try:
-                use_system_python = python_bin_arg.resolve().samefile(DEFAULT_CANVAS_PYTHON)
-            except OSError:
-                use_system_python = False
-        if not canvas_cli.exists():
-            raise FileNotFoundError(canvas_cli)
-        if not csv_path.exists():
-            raise FileNotFoundError(csv_path)
-
-        command = [
-            python_command,
-            str(canvas_cli),
-            "--csv",
-            str(csv_path),
-            "--key-name",
-            args.agent_name,
-            "--yes",
-            "--message-file",
-            str(prompt_path),
-        ]
-        env = os.environ.copy()
-        if use_system_python:
-            env.pop("SSL_CERT_FILE", None)
-            env.pop("REQUESTS_CA_BUNDLE", None)
-        else:
-            try:
-                import certifi  # type: ignore
-
-                env.setdefault("SSL_CERT_FILE", certifi.where())
-                env.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
-            except ImportError:
-                pass
-
-        completed, attempts, error_info = run_canvas_command(
-            command,
-            env=env,
-            timeout=args.timeout,
-            max_attempts=args.max_attempts,
-        )
-        raw_output = redact(completed.stdout)
-        raw_error = redact(completed.stderr)
-        clean_output = redact(clean_canvas_output(completed.stdout))
+        try:
+            canvas_text, canvas_events, attempts, error_info, canvas_meta = run_canvas_api(
+                prompt=prompt,
+                args=args,
+                timeout=args.timeout,
+                max_attempts=args.max_attempts,
+            )
+        except Exception as exc:  # noqa: BLE001 - persist configuration/client failures as structured output.
+            safe_error = redact(str(exc))
+            canvas_text = ""
+            canvas_events = []
+            attempts = [{"attempt": 1, "status": "failed", "error_summary": safe_error[:1200]}]
+            error_info = {
+                "error_type": "canvas_api_config_error" if "Missing required Canvas" in safe_error else "canvas_api_failed",
+                "error_summary": safe_error,
+                "likely_cause": "CANVAS_API_KEY、CANVAS_COMPANY_ID、CANVAS_AGENT_ID、CANVAS_API_BASE_URLを確認してください。",
+                "retryable": False,
+            }
+            canvas_meta = {
+                "base_url": args.base_url,
+                "agent_name": args.agent_name,
+                "external_user_id": args.external_user_id,
+                "conversation_id": args.conversation_id or "",
+            }
+        clean_output = redact(clean_canvas_output(canvas_text))
         parsed_payload, parse_error = parse_canvas_response(clean_output)
         standardized = normalize_canvas_payload(parsed_payload, concepts, campaign_goal)
         empty_note = (
             error_info.get("error_summary")
             or "Canvas返却の構造化に失敗しました。"
         )
+        success = not error_info.get("error_type")
         result.update(
             {
-                "status": "completed" if completed.returncode == 0 else "failed",
+                "status": "completed" if success else "failed",
                 "executed": True,
-                "returncode": completed.returncode,
-                "canvas_output": raw_output,
+                "canvas_output": redact(canvas_text),
                 "canvas_output_clean": clean_output,
+                "canvas_events": canvas_events,
+                "canvas_response_metadata": canvas_meta,
                 "parse_status": "parsed" if parsed_payload is not None else "failed",
                 "parse_error": parse_error,
                 "campaign_goal": standardized["campaign_goal"],
@@ -917,7 +1097,7 @@ def main() -> int:
                 "error_summary": error_info.get("error_summary", ""),
                 "likely_cause": error_info.get("likely_cause", ""),
                 "retryable": error_info.get("retryable", False),
-                "error": raw_error,
+                "error": error_info.get("error_summary", ""),
                 "finalized_at": utc_now_iso(),
             }
         )

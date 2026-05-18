@@ -5,15 +5,12 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from pathlib import Path
 from typing import Any
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = SKILL_ROOT.parents[1] if SKILL_ROOT.parent.name == "skills" else SKILL_ROOT.parent
-CANVAS_CLI = Path("/Users/powerly/Desktop/IoC/CANVAS/creative-production-workflow-integration/creative_production_chat.py")
-CANVAS_CSV = Path("/Users/powerly/Desktop/IoC/CANVAS/Canvas-APIKEY_for-CreativeProductionWorkflow.csv")
 POWER_AUTOMATE_DIR = REPO_ROOT
 POWER_AUTOMATE_ENV = POWER_AUTOMATE_DIR / ".env"
 POWER_AUTOMATE_SAVE_SCRIPT = POWER_AUTOMATE_DIR / "scripts/send_flow1_save_run.py"
@@ -63,30 +60,12 @@ def configured_value(name: str, env_path: Path = REPO_ENV_FILE) -> bool:
     )
 
 
-def list_canvas_agents() -> dict[str, Any]:
-    if not CANVAS_CLI.exists() or not CANVAS_CSV.exists():
-        return {"status": "not_configured", "agents": []}
-
-    completed = subprocess.run(
-        ["python3", str(CANVAS_CLI), "--csv", str(CANVAS_CSV), "--list"],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    agents: list[str] = []
-    for line in (completed.stdout + "\n" + completed.stderr).splitlines():
-        stripped = line.strip()
-        if ". " in stripped and not stripped.startswith("Agents"):
-            agents.append(stripped.split(". ", 1)[1])
-    return {
-        "status": "ok" if completed.returncode == 0 else "error",
-        "returncode": completed.returncode,
-        "agents": agents,
-    }
-
-
 def main() -> int:
+    canvas_configured = (
+        configured_value("CANVAS_API_KEY")
+        and configured_value("CANVAS_COMPANY_ID")
+        and configured_value("CANVAS_AGENT_ID")
+    )
     sharepoint_configured = configured_value("PA_SAVE_RUN_URL") and configured_value("PA_WORKFLOW_SECRET")
     openai_configured = (
         bool(os.environ.get("OPENAI_API_KEY", "").strip())
@@ -97,11 +76,15 @@ def main() -> int:
     )
     result = {
         "canvas": {
-            "cli_exists": CANVAS_CLI.exists(),
-            "csv_exists": CANVAS_CSV.exists(),
-            "agent_list": list_canvas_agents(),
+            "integration_mode": "direct_api",
+            "api_key_configured": configured_value("CANVAS_API_KEY"),
+            "company_id_configured": configured_value("CANVAS_COMPANY_ID"),
+            "agent_id_configured": configured_value("CANVAS_AGENT_ID"),
+            "base_url_configured": configured_value("CANVAS_API_BASE_URL"),
+            "external_user_id_configured": configured_value("CANVAS_EXTERNAL_USER_ID"),
             "can_prepare_prompt": True,
-            "can_execute_acceptance_eval": CANVAS_CLI.exists() and CANVAS_CSV.exists(),
+            "can_execute_acceptance_eval": canvas_configured,
+            "note": "Canvas評価はCSV/CLIを呼ばず、CANVAS_API_KEY/CANVAS_COMPANY_ID/CANVAS_AGENT_IDから直接APIへPOSTする。",
         },
         "sharepoint": {
             "template_dir_exists": POWER_AUTOMATE_DIR.exists(),
