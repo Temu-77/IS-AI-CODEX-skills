@@ -1,0 +1,4 @@
+interface:
+  display_name: "Banner Proposal"
+  short_description: "バナー案作成、画像生成、QA、Canvas評価、SharePoint保存準備を行います。"
+  default_prompt: "$banner-proposal を使って、2-1. バナー案作成フローを実行してください。"

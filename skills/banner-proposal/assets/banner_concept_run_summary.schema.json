@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "バナー案作成 実行サマリー",
+  "type": "object",
+  "required": [
+    "run_id",
+    "project_name",
+    "created_at",
+    "status",
+    "workflow",
+    "inputs",
+    "outputs",
+    "qa"
+  ],
+  "properties": {
+    "run_id": { "type": "string" },
+    "project_name": { "type": "string" },
+    "created_at": { "type": "string" },
+    "status": { "type": "string", "enum": ["draft", "success", "failed"] },
+    "workflow": { "type": "string", "const": "2-1-banner-concept" },
+    "inputs": {
+      "type": "object",
+      "properties": {
+        "client_name": { "type": "string" },
+        "campaign_name": { "type": "string" },
+        "orientation_file": { "type": "string" },
+        "reference_banners": { "type": "array", "items": { "type": "string" } },
+        "background_assets": { "type": "array", "items": { "type": "string" } },
+        "logos": { "type": "array", "items": { "type": "string" } }
+        ,
+        "regulated_category": { "type": "string" },
+        "adult_only": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "outputs": {
+      "type": "object",
+      "properties": {
+        "banner_spec": { "type": "string" },
+        "banner_concepts": { "type": "string" },
+        "gpt_image_prompt": { "type": "string" },
+        "qa_report": { "type": "string" },
+        "generated_images": { "type": "array", "items": { "type": "string" } },
+        "canvas_outputs": { "type": "string" },
+        "phase_timings": { "type": "string" },
+        "brand_asset_cache": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "qa": {
+      "type": "object",
+      "required": ["score", "summary"],
+      "properties": {
+        "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "summary": { "type": "string" },
+        "must_fix": { "type": "array", "items": { "type": "string" } },
+        "improvement_points": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

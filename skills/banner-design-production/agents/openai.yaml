@@ -1,0 +1,7 @@
+interface:
+  display_name: "Banner Design Production"
+  short_description: "採用案から本番デザインを2段階で作成"
+  default_prompt: "$banner-design-production を使って、採用構成案とフィードバックをもとに2-2. デザイン作成フローをPhase 1まで進めてください。"
+
+policy:
+  allow_implicit_invocation: true

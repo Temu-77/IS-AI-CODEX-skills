@@ -1,0 +1,4 @@
+interface:
+  display_name: "Banner Resizer"
+  short_description: "Resize ad banners from Codex"
+  default_prompt: "Use $banner-resizer to resize this source banner into target sizes with safe areas using GPT Image 2 plus Adobe Firefly outpaint."

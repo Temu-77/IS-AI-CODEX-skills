@@ -1,0 +1,41 @@
+# デザイン作成の入力テンプレート。
+# 2-1 banner-proposalの採用案・フィードバックをもとに入力してください。
+
+client_name: "サンプルクライアント"
+campaign_name: "サンプルキャンペーン"
+project_name: "サンプルクライアント - サンプルキャンペーン"
+source_banner_run_dir: "/absolute/path/to/outputs/banner-concept/run_id"
+
+adopted_concepts:
+  - "concept_1"
+banner_feedback: "採用案の理由、修正指示、残したいコピー/構成、直したい点を記載"
+banner_feedback_file: ""
+
+source_banner_images:
+  - "/absolute/path/to/adopted_banner.png"
+logos:
+  - "/absolute/path/to/logo.png"
+replacement_assets:
+  - "/absolute/path/to/product_or_background_asset.png"
+brand_guidelines:
+  - "/absolute/path/to/brand_guideline.pdf"
+past_creatives:
+  - "/absolute/path/to/past_creative.png"
+
+service_target: "ターゲット層またはセグメント"
+campaign_objective: "クリック重視 / 認知重視 / 購入促進 / その他"
+regulated_category: "none / tobacco / alcohol / financial / medical / other"
+adult_only: false
+banner_final_size: "600x500"
+generation_size: "1200x1008"
+delivery_size: "1200x1008"
+image_quality: "medium"
+iteration: 1
+
+fixed_elements_policy: "コピー、ロゴ、レイアウト、CTA、トーン&マナーは採用案から不用意に変えない。画像領域の改善/差し替えを中心に行う。"
+required_assets_policy: "提供された素材とロゴを使い、無関係な写真素材を勝手に作らない。"
+compliance_notes: ""
+banned_expressions:
+  - "過剰な効果保証"
+  - "根拠のないNo.1表現"
+notes: ""

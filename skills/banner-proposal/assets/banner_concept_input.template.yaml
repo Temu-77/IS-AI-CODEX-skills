@@ -1,0 +1,35 @@
+# バナー案作成の入力テンプレート。
+# 実行前にrunフォルダへコピーし、値を入力してください。
+
+client_name: "サンプルクライアント"
+campaign_name: "サンプルキャンペーン"
+project_name: "サンプルクライアント - サンプルキャンペーン"
+service_target: "ターゲット層またはセグメント"
+campaign_objective: "クリック重視 / 認知重視 / 購入促進 / その他"
+regulated_category: "none / tobacco / alcohol / financial / medical / other"
+adult_only: false
+banner_final_size: "600x500"
+generation_size: "1200x1008"
+delivery_size: "1200x1008"
+image_quality: "medium"
+iteration: 1
+
+orientation_file: "/absolute/path/to/orientation.pdf"
+reference_banners:
+  - "/absolute/path/to/reference_banner_1.png"
+background_assets:
+  - "/absolute/path/to/background_asset_1.png"
+logos:
+  - "/absolute/path/to/logo.png"
+brand_guidelines:
+  - "/absolute/path/to/brand_guideline.pdf"
+past_creatives:
+  - "/absolute/path/to/past_creative_1.png"
+
+required_assets_policy: "提供された素材とロゴを使い、無関係な写真素材を勝手に作らない。"
+compliance_notes: ""
+banned_expressions:
+  - "過剰な効果保証"
+  - "根拠のないNo.1表現"
+
+notes: ""
