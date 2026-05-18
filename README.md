@@ -61,7 +61,7 @@ $banner-design-production を使って、採用案とフィードバックをも
 ```
 
 ```text
-$banner-resizer を使って、このバナーを 1200x628:1040x508 と 1080x1080:960x960 にリサイズしてください。
+$banner-resizer を使って、このバナーを target size:1200x628, safe area:1040x508 と target size:1080x1080, safe area:960x960 にリサイズしてください。
 ```
 
 ## Repository Hygiene
