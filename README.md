@@ -1,4 +1,4 @@
-# ACRC Codex Skills
+# IS AI Agend Codex Skills
 
 Shareable Codex skill pack for banner planning, design production, and banner resizing workflows.
 
