@@ -1,4 +1,4 @@
-# IS AI Agend Codex Skills
+# IS AI Agent Codex Skills
 
 Shareable Codex skill pack for banner planning, design production, and banner resizing workflows.
 
