@@ -11,8 +11,8 @@ Shareable Codex skill pack for banner planning, design production, and banner re
 ## Install
 
 ```bash
-git clone <repo-url> ACRC-codex-skills
-cd ACRC-codex-skills
+git clone <repo-url> IS-AI-CODEX-skills
+cd IS-AI-CODEX-skills
 ./install.sh
 ```
 
@@ -37,7 +37,7 @@ chmod 600 .env
 OPENAI_API_KEY=
 PA_SAVE_RUN_URL=
 PA_WORKFLOW_SECRET=
-CANVAS_API_BASE_URL=https://mugen-ai-chat.jp
+CANVAS_API_BASE_URL=https://...
 CANVAS_API_KEY=
 CANVAS_COMPANY_ID=
 CANVAS_AGENT_ID=
